@@ -116,7 +116,7 @@
 
     .spacer {
       position: relative;
-      width: 100%;
+      width: calc(100% - 14px);
     }
 
     .rows {
@@ -204,6 +204,35 @@
       opacity: 1;
     }
 
+    .mini-scrollbar {
+      position: absolute;
+      top: 8px;
+      right: 4px;
+      bottom: 8px;
+      width: 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(48, 54, 61, 0.6);
+      z-index: 2;
+      touch-action: none;
+    }
+
+    .mini-thumb {
+      position: absolute;
+      left: 1px;
+      right: 1px;
+      top: 0;
+      min-height: 32px;
+      border-radius: 999px;
+      background: rgba(88, 166, 255, 0.75);
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+      cursor: grab;
+    }
+
+    .mini-thumb:active {
+      cursor: grabbing;
+    }
+
     @media (max-width: 900px) {
       .topbar {
         flex-wrap: wrap;
@@ -234,6 +263,9 @@
       <div class="spacer" id="spacer">
         <div class="rows" id="rows"></div>
       </div>
+      <div class="mini-scrollbar" id="miniScrollbar">
+        <div class="mini-thumb" id="miniThumb"></div>
+      </div>
     </div>
   </div>
   <div class="toast" id="toast">omg click handler in row</div>
@@ -253,6 +285,8 @@
     const jumpBtn = document.getElementById('jumpBtn');
     const scrubber = document.getElementById('scrubber');
     const toast = document.getElementById('toast');
+    const miniScrollbar = document.getElementById('miniScrollbar');
+    const miniThumb = document.getElementById('miniThumb');
 
     function escapeHtml(text) {
       return text
@@ -419,9 +453,26 @@
     let viewRow = 0;
     let targetRow = 0;
     let glideFrame = 0;
+    let draggingScrollbar = false;
+    let dragOffsetY = 0;
 
     function clampRow(row) {
       return Math.max(0, Math.min(TOTAL_ROWS - 1, row));
+    }
+
+    function thumbMetrics() {
+      const trackHeight = miniScrollbar.clientHeight;
+      const visibleRatio = Math.min(1, viewport.clientHeight / (TOTAL_ROWS * ROW_HEIGHT));
+      const thumbHeight = Math.max(32, Math.round(trackHeight * visibleRatio));
+      const travel = Math.max(0, trackHeight - thumbHeight);
+      return { trackHeight, thumbHeight, travel };
+    }
+
+    function updateMiniScrollbar() {
+      const { thumbHeight, travel } = thumbMetrics();
+      const ratio = TOTAL_ROWS <= 1 ? 0 : targetRow / (TOTAL_ROWS - 1);
+      miniThumb.style.height = `${thumbHeight}px`;
+      miniThumb.style.top = `${Math.round(travel * ratio)}px`;
     }
 
     function render() {
@@ -436,6 +487,7 @@
       renderCountEl.textContent = String(end - start);
       rowLabelEl.textContent = (Math.floor(viewRow) + 1).toLocaleString();
       scrubber.value = String(Math.floor((targetRow / (TOTAL_ROWS - 1)) * 1000000));
+      updateMiniScrollbar();
 
       let html = '';
       for (let i = start; i < end; i++) {
@@ -485,6 +537,15 @@
       glideFrame = requestAnimationFrame(glideToTarget);
     }
 
+    function rowFromScrollbarClientY(clientY) {
+      const rect = miniScrollbar.getBoundingClientRect();
+      const { thumbHeight, travel } = thumbMetrics();
+      const y = clientY - rect.top - dragOffsetY;
+      const clamped = Math.max(0, Math.min(travel, y));
+      const ratio = travel <= 0 ? 0 : clamped / travel;
+      return Math.round(ratio * (TOTAL_ROWS - 1));
+    }
+
     let toastTimer = 0;
     function showToast(clientX, clientY) {
       const offset = 14;
@@ -520,6 +581,31 @@
     }, { passive: false });
 
     window.addEventListener('resize', queueRender);
+
+    miniScrollbar.addEventListener('pointerdown', (event) => {
+      const thumbRect = miniThumb.getBoundingClientRect();
+      draggingScrollbar = true;
+      dragOffsetY = event.target === miniThumb ? event.clientY - thumbRect.top : thumbRect.height / 2;
+      miniScrollbar.setPointerCapture(event.pointerId);
+      syncRow(rowFromScrollbarClientY(event.clientY));
+    });
+
+    miniScrollbar.addEventListener('pointermove', (event) => {
+      if (!draggingScrollbar) return;
+      syncRow(rowFromScrollbarClientY(event.clientY));
+    });
+
+    miniScrollbar.addEventListener('pointerup', (event) => {
+      draggingScrollbar = false;
+      dragOffsetY = 0;
+      miniScrollbar.releasePointerCapture(event.pointerId);
+    });
+
+    miniScrollbar.addEventListener('pointercancel', (event) => {
+      draggingScrollbar = false;
+      dragOffsetY = 0;
+      miniScrollbar.releasePointerCapture(event.pointerId);
+    });
 
     function jumpToRow() {
       const value = Number(jumpInput.value);
