@@ -109,7 +109,7 @@
     }
 
     .viewport {
-      overflow: auto;
+      overflow: hidden;
       position: relative;
       background: var(--panel-2);
     }
@@ -416,35 +416,26 @@
     const renderCountEl = document.getElementById('renderCount');
     const rowLabelEl = document.getElementById('rowLabel');
     let ticking = false;
-    let anchorRow = 0;
+    let viewRow = 0;
+    let targetRow = 0;
+    let glideFrame = 0;
 
     function clampRow(row) {
       return Math.max(0, Math.min(TOTAL_ROWS - 1, row));
     }
 
-    function rowFromScrollTop(scrollTop) {
-      const available = Math.max(1, spacer.clientHeight - viewport.clientHeight);
-      const ratio = available <= 0 ? 0 : scrollTop / available;
-      return clampRow(Math.floor(ratio * (TOTAL_ROWS - 1)));
-    }
-
-    function scrollTopFromRow(row) {
-      const available = Math.max(0, spacer.clientHeight - viewport.clientHeight);
-      if (TOTAL_ROWS <= 1) return 0;
-      return Math.round((row / (TOTAL_ROWS - 1)) * available);
-    }
-
     function render() {
       ticking = false;
       const viewportHeight = viewport.clientHeight;
-      const visible = Math.ceil(viewportHeight / ROW_HEIGHT) + OVERSCAN * 2;
-      const start = clampRow(anchorRow - OVERSCAN);
+      const visible = Math.ceil(viewportHeight / ROW_HEIGHT) + OVERSCAN * 2 + 1;
+      const start = Math.max(0, Math.floor(viewRow) - OVERSCAN);
       const end = Math.min(TOTAL_ROWS, start + visible);
+      const offsetY = (viewRow - start) * ROW_HEIGHT;
 
-      rowsEl.style.transform = `translateY(${viewport.scrollTop}px)`;
+      rowsEl.style.transform = `translateY(${-offsetY}px)`;
       renderCountEl.textContent = String(end - start);
-      rowLabelEl.textContent = (anchorRow + 1).toLocaleString();
-      scrubber.value = String(Math.floor((anchorRow / (TOTAL_ROWS - 1)) * 1000000));
+      rowLabelEl.textContent = (Math.floor(viewRow) + 1).toLocaleString();
+      scrubber.value = String(Math.floor((targetRow / (TOTAL_ROWS - 1)) * 1000000));
 
       let html = '';
       for (let i = start; i < end; i++) {
@@ -466,6 +457,34 @@
       requestAnimationFrame(render);
     }
 
+    function syncRow(row) {
+      targetRow = clampRow(row);
+      viewRow = targetRow;
+      if (glideFrame) {
+        cancelAnimationFrame(glideFrame);
+        glideFrame = 0;
+      }
+      queueRender();
+    }
+
+    function glideToTarget() {
+      const delta = targetRow - viewRow;
+      if (Math.abs(delta) < 0.02) {
+        viewRow = targetRow;
+        glideFrame = 0;
+        queueRender();
+        return;
+      }
+      viewRow = clampRow(viewRow + delta * 0.22);
+      queueRender();
+      glideFrame = requestAnimationFrame(glideToTarget);
+    }
+
+    function ensureGlide() {
+      if (glideFrame) return;
+      glideFrame = requestAnimationFrame(glideToTarget);
+    }
+
     let toastTimer = 0;
     function showToast(clientX, clientY) {
       const offset = 14;
@@ -482,38 +501,34 @@
       }, 1200);
     }
 
-    viewport.addEventListener('scroll', () => {
-      anchorRow = rowFromScrollTop(viewport.scrollTop);
-      queueRender();
-    }, { passive: true });
+    const WHEEL_LINES_PER_STEP = 2;
 
     viewport.addEventListener('wheel', (event) => {
       if (event.ctrlKey) return;
-      const deltaRows = Math.trunc(event.deltaY / 4);
-      if (!deltaRows) return;
       event.preventDefault();
-      anchorRow = clampRow(anchorRow + deltaRows);
-      viewport.scrollTop = scrollTopFromRow(anchorRow);
-      queueRender();
+
+      const deltaPixels = event.deltaY * (
+        event.deltaMode === WheelEvent.DOM_DELTA_LINE ? ROW_HEIGHT :
+        event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? viewport.clientHeight :
+        1
+      );
+      if (!deltaPixels) return;
+
+      const intensity = Math.min(Math.abs(deltaPixels) / ROW_HEIGHT, 1);
+      targetRow = clampRow(targetRow + Math.sign(deltaPixels) * intensity * WHEEL_LINES_PER_STEP);
+      ensureGlide();
     }, { passive: false });
 
-    window.addEventListener('resize', () => {
-      viewport.scrollTop = scrollTopFromRow(anchorRow);
-      queueRender();
-    });
+    window.addEventListener('resize', queueRender);
 
     function jumpToRow() {
       const value = Number(jumpInput.value);
       if (!Number.isFinite(value)) return;
-      anchorRow = clampRow(Math.floor(value) - 1);
-      viewport.scrollTop = scrollTopFromRow(anchorRow);
-      queueRender();
+      syncRow(Math.floor(value) - 1);
     }
 
     scrubber.addEventListener('input', () => {
-      anchorRow = clampRow(Math.floor((Number(scrubber.value) / 1000000) * (TOTAL_ROWS - 1)));
-      viewport.scrollTop = scrollTopFromRow(anchorRow);
-      queueRender();
+      syncRow(Math.floor((Number(scrubber.value) / 1000000) * (TOTAL_ROWS - 1)));
     });
 
     rowsEl.addEventListener('click', (event) => {
@@ -527,8 +542,7 @@
       if (event.key === 'Enter') jumpToRow();
     });
 
-    viewport.scrollTop = 0;
-    render();
+    syncRow(0);
   </script>
 </body>
 </html>
