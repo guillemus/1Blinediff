@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>1,000,000,000 Line Diff</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: #161b22;
+      --panel-2: #0f141b;
+      --text: #c9d1d9;
+      --muted: #7d8590;
+      --border: #30363d;
+      --accent: #58a6ff;
+      --add-bg: rgba(46, 160, 67, 0.18);
+      --del-bg: rgba(248, 81, 73, 0.16);
+      --ctx-bg: transparent;
+      --add-line: #3fb950;
+      --del-line: #f85149;
+      --ctx-line: #8b949e;
+      --kw: #ff7b72;
+      --fn: #d2a8ff;
+      --str: #a5d6ff;
+      --num: #79c0ff;
+      --com: #8b949e;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: linear-gradient(180deg, #0d1117 0%, #0a0f14 100%);
+      color: var(--text);
+      font: 13px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      overflow: hidden;
+    }
+
+    .app {
+      height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(13, 17, 23, 0.92);
+      backdrop-filter: blur(8px);
+      position: sticky;
+      top: 0;
+      z-index: 3;
+    }
+
+    .title {
+      font-weight: 700;
+      color: #f0f6fc;
+      white-space: nowrap;
+    }
+
+    .stats {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      color: var(--muted);
+    }
+
+    .pill {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      padding: 4px 8px;
+      border-radius: 999px;
+    }
+
+    .controls {
+      margin-left: auto;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    input, button {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font: inherit;
+      padding: 7px 10px;
+      border-radius: 8px;
+      outline: none;
+    }
+
+    input {
+      width: 140px;
+    }
+
+    #scrubber {
+      width: 180px;
+      padding: 0;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    button:hover, input:focus {
+      border-color: var(--accent);
+    }
+
+    .viewport {
+      overflow: auto;
+      position: relative;
+      background: var(--panel-2);
+    }
+
+    .spacer {
+      position: relative;
+      width: 100%;
+    }
+
+    .rows {
+      position: absolute;
+      inset: 0 0 auto 0;
+      will-change: transform;
+    }
+
+    .row {
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 22px;
+      display: grid;
+      grid-template-columns: 96px 96px 22px minmax(0, 1fr);
+      align-items: center;
+      border-bottom: 1px solid rgba(48, 54, 61, 0.33);
+      white-space: pre;
+    }
+
+    .row:hover {
+      filter: brightness(1.06);
+    }
+
+    .row.context { background: var(--ctx-bg); }
+    .row.add    { background: var(--add-bg); }
+    .row.delete { background: var(--del-bg); }
+
+    .cell {
+      padding: 0 10px;
+      min-width: 0;
+    }
+
+    .ln {
+      color: var(--muted);
+      text-align: right;
+      border-right: 1px solid rgba(48, 54, 61, 0.55);
+    }
+
+    .sign {
+      padding: 0;
+      text-align: center;
+      font-weight: 700;
+    }
+
+    .row.add .sign { color: var(--add-line); }
+    .row.delete .sign { color: var(--del-line); }
+    .row.context .sign { color: var(--ctx-line); }
+
+    .code {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: #e6edf3;
+    }
+
+    .kw { color: var(--kw); }
+    .fn { color: var(--fn); }
+    .str { color: var(--str); }
+    .num { color: var(--num); }
+    .com { color: var(--com); }
+
+    .legend {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .toast {
+      position: fixed;
+      left: 0;
+      top: 0;
+      z-index: 5;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: rgba(22, 27, 34, 0.96);
+      color: #f0f6fc;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 120ms ease;
+    }
+
+    .toast.show {
+      opacity: 1;
+    }
+
+    @media (max-width: 900px) {
+      .topbar {
+        flex-wrap: wrap;
+      }
+      .controls {
+        margin-left: 0;
+      }
+      .legend {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="topbar">
+      <div class="title">1,000,000,000 line diff — single file, virtualized</div>
+      <div class="stats" id="stats"></div>
+      <div class="controls">
+        <input id="jumpInput" type="number" min="1" step="1" placeholder="Jump to row" />
+        <button id="jumpBtn">Jump</button>
+        <input id="scrubber" type="range" min="0" max="1000000" step="1" value="0" />
+      </div>
+      <div class="legend">DOM stays tiny. Data stays huge.</div>
+    </div>
+
+    <div class="viewport" id="viewport">
+      <div class="spacer" id="spacer">
+        <div class="rows" id="rows"></div>
+      </div>
+    </div>
+  </div>
+  <div class="toast" id="toast">omg click handler in row</div>
+
+  <script>
+    const TOTAL_ROWS = 1000000000;
+    const ROW_HEIGHT = 22;
+    const OVERSCAN = 20;
+    const CYCLE = 20;
+    const SAFE_SCROLL_HEIGHT = 10000000;
+
+    const viewport = document.getElementById('viewport');
+    const spacer = document.getElementById('spacer');
+    const rowsEl = document.getElementById('rows');
+    const statsEl = document.getElementById('stats');
+    const jumpInput = document.getElementById('jumpInput');
+    const jumpBtn = document.getElementById('jumpBtn');
+    const scrubber = document.getElementById('scrubber');
+    const toast = document.getElementById('toast');
+
+    function escapeHtml(text) {
+      return text
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;');
+    }
+
+    function makeCodeLine(i, variant) {
+      const mod = i % 40;
+      const bucket = Math.floor(i / 40);
+      const fn = `task_${bucket}_${String(i % 17).padStart(2, '0')}`;
+      const entity = `worker_${i % 97}`;
+      const amount = ((i * 13) % 997) + 3;
+      const retry = (i % 5) + 1;
+      const latency = ((i * 29) % 380) + 20;
+      const label = `segment_${bucket}_${i % 9}`;
+
+      if (mod === 0) return `func ${fn}(ctx context.Context, input int) error {`;
+      if (mod === 1) return `    ${entity} := loadNode(${i % 41}, \"${label}\")`;
+      if (mod === 2) return `    if input < ${amount} {`;
+      if (mod === 3) return `        return fmt.Errorf(\"input below threshold: %d\", input)`;
+      if (mod === 4) return `    }`;
+      if (mod === 5) return `    total := input + ${amount}`;
+      if (mod === 6) return variant === 'new'
+        ? `    total += calibrate(${entity}, ${retry})`
+        : `    total += tune(${entity}, ${retry})`;
+      if (mod === 7) return `    for step := 0; step < ${retry + 2}; step++ {`;
+      if (mod === 8) return variant === 'new'
+        ? `        total += step * ${((i * 7) % 9) + 1}`
+        : `        total += step * ${((i * 5) % 7) + 1}`;
+      if (mod === 9) return `    }`;
+      if (mod === 10) return variant === 'new'
+        ? `    if err := emitMetric(ctx, \"latency_ms\", ${latency}); err != nil {`
+        : `    if err := writeMetric(ctx, \"latency_ms\", ${latency}); err != nil {`;
+      if (mod === 11) return `        return err`;
+      if (mod === 12) return `    }`;
+      if (mod === 13) return `    if total%${retry + 2} == 0 {`;
+      if (mod === 14) return variant === 'new'
+        ? `        total += ${i % 11}`
+        : `        total -= ${i % 11}`;
+      if (mod === 15) return `    }`;
+      if (mod === 16) return variant === 'new'
+        ? `    summary := fmt.Sprintf(\"${label}:%d:%s\", total, \"ready\")`
+        : `    summary := fmt.Sprintf(\"${label}:%d:%s\", total, \"ok\")`;
+      if (mod === 17) return `    _ = summary`;
+      if (mod === 18) return `    return persistResult(ctx, ${entity}, total)`;
+      if (mod === 19) return `}`;
+      if (mod === 20) return `// section ${bucket} checkpoint ${i}`;
+      if (mod === 21) return `const rate_${i % 23} = ${amount}`;
+      if (mod === 22) return `type payload_${i % 19} struct {`;
+      if (mod === 23) return `    Name string`;
+      if (mod === 24) return `    Count int`;
+      if (mod === 25) return `}`;
+      if (mod === 26) return variant === 'new'
+        ? `var state_${i % 29} = []string{\"hot\", \"warm\", \"cold\"}`
+        : `var state_${i % 29} = []string{\"warm\", \"cold\"}`;
+      if (mod === 27) return `switch ${entity}.Mode {`;
+      if (mod === 28) return `case \"active\":`;
+      if (mod === 29) return `    total += ${retry * 3}`;
+      if (mod === 30) return `case \"idle\":`;
+      if (mod === 31) return `    total -= ${retry}`;
+      if (mod === 32) return `default:`;
+      if (mod === 33) return `    total += ${retry + 1}`;
+      if (mod === 34) return `}`;
+      if (mod === 35) return variant === 'new'
+        ? `if total > ${amount + 50} { total = clamp(total, 0, 4096) }`
+        : `if total > ${amount + 50} { total = min(total, 4096) }`;
+      if (mod === 36) return `buf := make([]byte, 0, ${retry * 16})`;
+      if (mod === 37) return `buf = append(buf, byte(total%255))`;
+      if (mod === 38) return `processBuffer(buf)`;
+      return `// tail ${i}`;
+    }
+
+    const KEYWORDS = /\b(func|return|if|for|switch|case|default|const|type|struct|var|error|context|int|string|nil)\b/g;
+    const FUNCTIONS = /\b(task_\d+_\d+|loadNode|persistResult|emitMetric|writeMetric|calibrate|tune|clamp|min|processBuffer|fmt\.Errorf|fmt\.Sprintf)\b/g;
+    const NUMBERS = /\b\d+\b/g;
+    const TOKEN = /"(?:[^"\\]|\\.)*"|\b(?:func|return|if|for|switch|case|default|const|type|struct|var|error|context|int|string|nil)\b|\b(?:task_\d+_\d+|loadNode|persistResult|emitMetric|writeMetric|calibrate|tune|clamp|min|processBuffer|fmt\.Errorf|fmt\.Sprintf)\b|\b\d+\b/g;
+
+    function highlightPlain(text) {
+      let out = '';
+      let last = 0;
+      for (const match of text.matchAll(TOKEN)) {
+        const token = match[0];
+        const index = match.index;
+        out += escapeHtml(text.slice(last, index));
+        if (token.startsWith('"')) out += `<span class="str">${escapeHtml(token)}</span>`;
+        else if (KEYWORDS.test(token)) out += `<span class="kw">${escapeHtml(token)}</span>`;
+        else if (FUNCTIONS.test(token)) out += `<span class="fn">${escapeHtml(token)}</span>`;
+        else if (NUMBERS.test(token)) out += `<span class="num">${escapeHtml(token)}</span>`;
+        KEYWORDS.lastIndex = 0;
+        FUNCTIONS.lastIndex = 0;
+        NUMBERS.lastIndex = 0;
+        last = index + token.length;
+      }
+      out += escapeHtml(text.slice(last));
+      return out;
+    }
+
+    function tokenize(line) {
+      const commentIndex = line.indexOf('//');
+      if (commentIndex === -1) return highlightPlain(line);
+      return highlightPlain(line.slice(0, commentIndex)) + `<span class="com">${escapeHtml(line.slice(commentIndex))}</span>`;
+    }
+
+    function getMode(i) {
+      return i % CYCLE;
+    }
+
+    function countOldBefore(i) {
+      const cycles = Math.floor(i / CYCLE);
+      const rem = i % CYCLE;
+      return cycles * 16 + Math.min(rem, 6) + Math.max(0, rem - 9);
+    }
+
+    function countNewBefore(i) {
+      const cycles = Math.floor(i / CYCLE);
+      const rem = i % CYCLE;
+      return cycles * 17 + Math.min(rem, 6) + Math.max(0, Math.min(rem, 13) - 9) + Math.max(0, rem - 13);
+    }
+
+    function buildRow(i) {
+      const mode = getMode(i);
+      const oldNo = countOldBefore(i) + 1;
+      const newNo = countNewBefore(i) + 1;
+
+      if (mode === 6 || mode === 7 || mode === 8) {
+        const line = makeCodeLine(i, 'old');
+        return { type: 'delete', oldNo, newNo: '', sign: '-', html: tokenize(line) };
+      }
+
+      if (mode === 9 || mode === 10 || mode === 11 || mode === 12) {
+        const line = makeCodeLine(i, 'new');
+        return { type: 'add', oldNo: '', newNo, sign: '+', html: tokenize(line) };
+      }
+
+      const line = makeCodeLine(i, 'new');
+      return { type: 'context', oldNo, newNo, sign: ' ', html: tokenize(line) };
+    }
+
+    function countMatches(limit, start, endExclusive) {
+      const cycles = Math.floor(limit / CYCLE);
+      const rem = limit % CYCLE;
+      return cycles * (endExclusive - start) + Math.max(0, Math.min(rem, endExclusive) - start);
+    }
+
+    const adds = countMatches(TOTAL_ROWS, 9, 13);
+    const dels = countMatches(TOTAL_ROWS, 6, 9);
+    const ctx = TOTAL_ROWS - adds - dels;
+
+    spacer.style.height = `${SAFE_SCROLL_HEIGHT}px`;
+    statsEl.innerHTML = [
+      `<span class="pill">rows ${TOTAL_ROWS.toLocaleString()}</span>`,
+      `<span class="pill">context ${ctx.toLocaleString()}</span>`,
+      `<span class="pill">+ ${adds.toLocaleString()}</span>`,
+      `<span class="pill">- ${dels.toLocaleString()}</span>`,
+      `<span class="pill">rendered <span id="renderCount">0</span></span>`,
+      `<span class="pill">row <span id="rowLabel">1</span></span>`
+    ].join('');
+
+    const renderCountEl = document.getElementById('renderCount');
+    const rowLabelEl = document.getElementById('rowLabel');
+    let ticking = false;
+    let anchorRow = 0;
+
+    function clampRow(row) {
+      return Math.max(0, Math.min(TOTAL_ROWS - 1, row));
+    }
+
+    function rowFromScrollTop(scrollTop) {
+      const available = Math.max(1, spacer.clientHeight - viewport.clientHeight);
+      const ratio = available <= 0 ? 0 : scrollTop / available;
+      return clampRow(Math.floor(ratio * (TOTAL_ROWS - 1)));
+    }
+
+    function scrollTopFromRow(row) {
+      const available = Math.max(0, spacer.clientHeight - viewport.clientHeight);
+      if (TOTAL_ROWS <= 1) return 0;
+      return Math.round((row / (TOTAL_ROWS - 1)) * available);
+    }
+
+    function render() {
+      ticking = false;
+      const viewportHeight = viewport.clientHeight;
+      const visible = Math.ceil(viewportHeight / ROW_HEIGHT) + OVERSCAN * 2;
+      const start = clampRow(anchorRow - OVERSCAN);
+      const end = Math.min(TOTAL_ROWS, start + visible);
+
+      rowsEl.style.transform = `translateY(${viewport.scrollTop}px)`;
+      renderCountEl.textContent = String(end - start);
+      rowLabelEl.textContent = (anchorRow + 1).toLocaleString();
+      scrubber.value = String(Math.floor((anchorRow / (TOTAL_ROWS - 1)) * 1000000));
+
+      let html = '';
+      for (let i = start; i < end; i++) {
+        const row = buildRow(i);
+        html += `<div class="row ${row.type}" style="top:${(i - start) * ROW_HEIGHT}px">` +
+          `<div class="cell ln">${row.oldNo}</div>` +
+          `<div class="cell ln">${row.newNo}</div>` +
+          `<div class="cell sign">${row.sign}</div>` +
+          `<div class="cell code">${row.html}</div>` +
+        `</div>`;
+      }
+      rowsEl.innerHTML = html;
+      rowsEl.style.height = `${(end - start) * ROW_HEIGHT}px`;
+    }
+
+    function queueRender() {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(render);
+    }
+
+    let toastTimer = 0;
+    function showToast(clientX, clientY) {
+      const offset = 14;
+      const maxX = window.innerWidth - toast.offsetWidth - 8;
+      const maxY = window.innerHeight - toast.offsetHeight - 8;
+      const x = Math.min(clientX + offset, Math.max(8, maxX));
+      const y = Math.min(clientY + offset, Math.max(8, maxY));
+      toast.style.left = `${x}px`;
+      toast.style.top = `${y}px`;
+      clearTimeout(toastTimer);
+      toast.classList.add('show');
+      toastTimer = setTimeout(() => {
+        toast.classList.remove('show');
+      }, 1200);
+    }
+
+    viewport.addEventListener('scroll', () => {
+      anchorRow = rowFromScrollTop(viewport.scrollTop);
+      queueRender();
+    }, { passive: true });
+
+    viewport.addEventListener('wheel', (event) => {
+      if (event.ctrlKey) return;
+      const deltaRows = Math.trunc(event.deltaY / 4);
+      if (!deltaRows) return;
+      event.preventDefault();
+      anchorRow = clampRow(anchorRow + deltaRows);
+      viewport.scrollTop = scrollTopFromRow(anchorRow);
+      queueRender();
+    }, { passive: false });
+
+    window.addEventListener('resize', () => {
+      viewport.scrollTop = scrollTopFromRow(anchorRow);
+      queueRender();
+    });
+
+    function jumpToRow() {
+      const value = Number(jumpInput.value);
+      if (!Number.isFinite(value)) return;
+      anchorRow = clampRow(Math.floor(value) - 1);
+      viewport.scrollTop = scrollTopFromRow(anchorRow);
+      queueRender();
+    }
+
+    scrubber.addEventListener('input', () => {
+      anchorRow = clampRow(Math.floor((Number(scrubber.value) / 1000000) * (TOTAL_ROWS - 1)));
+      viewport.scrollTop = scrollTopFromRow(anchorRow);
+      queueRender();
+    });
+
+    rowsEl.addEventListener('click', (event) => {
+      const row = event.target.closest('.row');
+      if (!row) return;
+      showToast(event.clientX, event.clientY);
+    });
+
+    jumpBtn.addEventListener('click', jumpToRow);
+    jumpInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') jumpToRow();
+    });
+
+    viewport.scrollTop = 0;
+    render();
+  </script>
+</body>
+</html>
